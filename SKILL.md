@@ -15,7 +15,7 @@ metadata:
     primaryEnv: "PIKA_AGENT_API_KEY"
 ---
 
-# Podcast
+# Podcast Skill
 
 You are the voice. Write a plan JSON with your script and production parameters, then `generate.py` handles TTS + music + mixing.
 
@@ -25,121 +25,312 @@ You are the voice. Write a plan JSON with your script and production parameters,
 
 ```bash
 # 1. Write your plan (see Plan Format below)
-# 2. Validate it
-python $PIKABOT_SKILLS_DIR/podcast/scripts/generate.py validate plan.json
+# 2. Save to events/podcast/plans/ (NOT /tmp — lost on restart)
+# 3. Validate it
+python $PIKABOT_SKILLS_DIR/podcast/scripts/generate.py validate events/podcast/plans/my_ep.json
 
-# 3. Generate — pick a descriptive --name
+# 4. Generate
 python $PIKABOT_SKILLS_DIR/podcast/scripts/generate.py generate \
-  --plan plan.json --name "shao_ep01"
+  --plan events/podcast/plans/my_ep.json --name "my_episode"
 ```
 
-## Running in Background (Recommended)
-
-Generation takes 2-5 minutes (TTS → music → mix). **Always run in background:**
-
-```
-exec(command="python $PIKABOT_SKILLS_DIR/podcast/scripts/generate.py generate --plan plan.json --name my_episode", background=true, yieldMs=30000, timeout=600)
-```
-
-Check progress: `process(action=poll, sessionId="...", timeout=180000)`
+**Always spawn a subagent for generation** — takes 4–6 minutes. Never block the main session.
 
 Final output line: `AUDIO:generated/podcast/{name}_{hash}.mp3`
 
-**Plan Storage:** ALWAYS save plan JSON to `events/podcast/plans/{name}.json` BEFORE generating. Plans in `/tmp` are lost on restart.
+---
 
-## Plan Format
+## Plan Format (v2 — Multi-Segment with Music Cues)
+
+This is the production-grade format. Use it for all new episodes.
 
 ```json
 {
+  "meta": { "version": 1 },
   "topic": "少",
   "thesis": "少不是减法——是一种对什么值得存在的判断",
   "duration_minutes": 4,
   "language": "zh",
-  "persona": {
-    "voice_id_file": "life/voice_id.txt",
-    "speed": 0.85,
+  "script_file": "events/podcast/plans/my_script.txt",
+  "voice": {
+    "voice_id": "ttv-voice-XXXXXXXX",
+    "language": "zh",
+    "speed": 0.88,
     "pitch": -1,
-    "vol": 1.0
+    "vol": 1.0,
+    "speed_overrides": {
+      "seg_pre": 0.88,
+      "seg_1": 0.93,
+      "seg_2": 0.86,
+      "seg_3": 0.84,
+      "seg_conclusion": 0.87
+    }
   },
-  "music": {
-    "style": "minimalist ambient piano, sparse slow notes, dark contemplative",
-    "lyrics": "[intro]\nMm...\n[outro]\nMm...",
-    "volume": 0.15,
-    "fade_out_seconds": 5
+  "music_library": {
+    "piano_motif": {
+      "style": "solo acoustic piano, slow gentle arpeggios, atmospheric, sparse but continuous, soft sustained chords, dreamlike and still, [instrumental]",
+      "lyrics": "[instrumental]",
+      "base_duration_s": 90,
+      "loopable": true,
+      "loop_if_short": true
+    },
+    "cello_drone": {
+      "style": "single sustained cello tone, extremely long bowing, no vibrato, no rhythm, no melody, no movement, barely audible ambient resonance, [instrumental]",
+      "lyrics": "[instrumental]",
+      "base_duration_s": 120,
+      "loopable": true,
+      "loop_if_short": true
+    }
   },
-  "script": "Your full script text here. No stage directions — pure spoken word."
+  "music_cues": [
+    {
+      "id": "open",
+      "keyword": "MUSIC IN",
+      "asset_id": "piano_motif",
+      "vol": 0.10,
+      "fade_in_s": 4,
+      "fade_out_s": 2,
+      "duration_source": "through_next_cue",
+      "duration_buffer_s": 5
+    },
+    {
+      "id": "body",
+      "keyword": "CELLO IN",
+      "asset_id": "cello_drone",
+      "vol": 0.07,
+      "fade_in_s": 3,
+      "fade_out_s": 3,
+      "duration_source": "through_next_cue",
+      "duration_buffer_s": 5
+    },
+    {
+      "id": "close",
+      "keyword": "MUSIC OUT",
+      "asset_id": "piano_motif",
+      "vol": 0.10,
+      "fade_in_s": 4,
+      "fade_out_s": 12,
+      "duration_source": "next_tts_segment",
+      "duration_buffer_s": 20
+    }
+  ],
+  "mix": {
+    "output_bitrate": "192k",
+    "volume_envelope": {
+      "intro_end_s": 30,
+      "transition_s": 10,
+      "body_vol": 0.35
+    }
+  }
 }
 ```
 
-**Or use a script file:**
-```json
+---
+
+## Script File Format (with Music Markers)
+
+The script uses markers to define music cue points and pauses. Markers must match `keyword` fields in `music_cues`.
+
+```text
+[MUSIC IN]
+
+这是一段开场白，在音乐进入之前稍作沉默，然后开始讲述。
+
+[PAUSE 1.5s]
+
+这里是第一段正文内容。
+
+[CELLO IN]
+
+这里是第二段，更安静的部分，大提琴在背后支撑。
+
+[PAUSE 1.5s]
+
+继续讲述...
+
+[MUSIC OUT]
+
+这里是结尾，钢琴回归。
+```
+
+**Marker rules:**
+- Markers go on their own line, wrapped in `[...]`
+- `[PAUSE Xs]` inserts X seconds of silence (exact syntax required)
+- `[MUSIC IN]`, `[CELLO IN]`, `[MUSIC OUT]` etc. trigger cue by `keyword` match
+- A music cue plays from its marker until the next music cue (if `through_next_cue`), or for one TTS segment (if `next_tts_segment`)
+- **NEVER put phonetic annotations in the script** — TTS will read them as literal text
+
+---
+
+## Voice Configuration
+
+### Using Voice Design (Recommended for Chinese)
+
+For Chinese podcasts, use MiniMax voice design API to create a designed voice — far better Chinese pronunciation than cloned English voices.
+
+```python
+# Create a designed voice (one-time setup)
+POST /proxy/minimax/v1/voice_design
 {
-  "script_file": "events/podcast/scripts/shao_script.txt",
-  ...
+  "prompt": "年轻女性导演，声音低沉温柔，节奏舒缓，中文韵律感强，温暖有质感",
+  "preview_text": "少，不是减法。是一种判断。"
+}
+# → returns voice_id: "ttv-voice-XXXXXXXX"
+```
+
+Then use the voice_id directly in the plan:
+```json
+"voice": { "voice_id": "ttv-voice-XXXXXXXX" }
+```
+
+Or use `voice_id_file` to reference a file containing the voice ID:
+```json
+"voice": { "voice_id_file": "life/voice_id.txt" }
+```
+
+### Per-Segment Speed Overrides
+
+Different topics warrant different speaking rates. Use `speed_overrides` keyed by segment ID (auto-generated as `seg_pre`, `seg_1`, `seg_2` etc. matching script order):
+
+```json
+"speed_overrides": {
+  "seg_pre": 0.88,
+  "seg_1": 0.93,
+  "seg_2": 0.86,
+  "seg_3": 0.84
 }
 ```
 
-## Plan Parameters
+Recommended ranges: 0.84 (slowest, most reflective) → 0.93 (faster, conversational)
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `topic` | ✓ | Single-word or short topic label |
-| `thesis` | ✓ | One sentence: what this episode argues or explores |
-| `duration_minutes` | ✓ | Target duration (1–30). Used to validate script length |
-| `language` | ✓ | `zh` (Chinese), `en` (English), `ja` (Japanese), etc. |
-| `persona.voice_id_file` | ✓ | Path to voice ID file (e.g. `life/voice_id.txt`) |
-| `persona.speed` | — | Speech rate (default: 1.0). 0.8–0.9 = calm/reflective |
-| `persona.pitch` | — | Pitch offset (default: 0). -1 to -2 = lower/warmer |
-| `persona.vol` | — | Volume (default: 1.0) |
-| `music.style` | — | Music generation prompt. Omit for voice-only |
-| `music.lyrics` | — | Minimal lyrics/humming for music gen |
-| `music.volume` | — | BGM mix level (default: 0.15). Keep under 0.25 |
-| `music.fade_out_seconds` | — | Fade BGM out at end (default: 5) |
-| `script` | ✓* | Full script text (inline) |
-| `script_file` | ✓* | Path to script file (alternative to `script`) |
+---
 
-*One of `script` or `script_file` required.
+## Music Production Rules
 
-## Script Writing Constraints
+### Music Library Deduplication
 
-See `references/script-guide.md` for the full framework. Quick rules:
+The `music_library` defines named assets. Each asset is generated **once** and reused by multiple cues. This avoids redundant API calls and ensures consistency.
 
-**Three non-negotiables (must be explicit in the plan):**
-1. `duration_minutes` — controls depth and density
-2. `thesis` — one clear narrative thread; if two things are being said, it's two episodes
-3. `persona` — whose voice, what tone, what speed
+- `base_duration_s`: maximum duration you'll need from this asset
+- `loopable: true` + `loop_if_short: true`: required when MiniMax returns a short clip (common for piano/ambient)
 
-**Sonic constraints (sentences must work when spoken):**
-- Short sentences. No nested clauses. No parentheses.
-- Vary sentence length — short punchy + longer flowing alternating
-- Punctuation = breath. Commas and periods control pacing.
-- ~200 chars/min for Chinese, ~130 words/min for English
+### Volume Architecture
 
-**Structural arc (required):**
-- Hook (first 15 seconds must earn the next 3 minutes)
-- Tension/development (one thread, deepened — not multiplied)
-- Landing (last lines must feel complete; open endings are intentional, not lazy)
+**Critical: do NOT use per-cue `vol` to shape the overall loudness arc.**
 
-**Music integration (if using music):**
-- Script should have natural pause points where music can breathe
-- Don't mark stage directions in the script — keep it pure spoken word
-- BGM is background; voice is foreground; never compete
+Instead:
+1. Set per-cue `vol` to natural instrument levels (piano: 0.10, cello: 0.07)
+2. Use `mix.volume_envelope` to apply a smooth arc to the entire assembled music track
+
+The `volume_envelope` config:
+```json
+"volume_envelope": {
+  "intro_end_s": 30,      // full volume for first 30s
+  "transition_s": 10,     // 10s fade to body level
+  "body_vol": 0.35        // relative level during main narration (35% of full)
+  // close: symmetric — rises back to 1.0 10s before end
+}
+```
+
+This creates a smooth broadcast-style ducking arc:
+`[1.0 intro] → [fade] → [0.35 body] → [fade] → [1.0 close]`
+
+### Music Style Guidelines
+
+| Use case | Style descriptor | Notes |
+|----------|-----------------|-------|
+| Reflective intro/outro | `solo acoustic piano, slow arpeggios, atmospheric, [instrumental]` | Always use `[instrumental]` — no humming/chanting prompts |
+| Body / quiet background | `single sustained cello tone, no vibrato, no rhythm, [instrumental]` | Keep vol very low (0.06–0.08); avoid rhythmic movement |
+| Sparse interlocutor | `sparse single piano notes, each note resonates fully before next, breathing presence` | Wenghao style: piano as "other voice" not background fill |
+| Energetic/upbeat | `uptempo acoustic guitar, gentle rhythm, warm` | Don't compete with voice |
+
+**Avoid:**
+- `tintinnabuli` or reverb-heavy sparse styles → creates silent zones (appears as -17dB with no audible content for 10+ seconds)
+- Any lyrics or humming in the style prompt → MiniMax may generate female vocal chanting that drowns the host voice
+- Aggressive rhythmic movement for cello → sounds intrusive; cello should be atmosphere only
+
+### Duration Sources
+
+| `duration_source` | Behavior |
+|-------------------|----------|
+| `through_next_cue` | Music spans from this cue marker to the next music cue, summing all TTS + pause durations between them + `duration_buffer_s` |
+| `next_tts_segment` | Music spans the duration of the next TTS segment only |
+| (fixed number) | Music plays for exactly that many seconds |
+
+---
+
+## Production Gotchas (Hard-Won Lessons)
+
+### 1. Phonetic annotations in script → TTS reads them aloud
+
+**Wrong:** `「减少」的少（shǎo）` → TTS says "jiǎn shǎo de shǎo shǎo"
+**Right:** Just write `「减少」的少` — designed Chinese voices handle tones natively
+
+Never add `（shǎo）`, `[音：shǎo]`, or any other inline annotation. The TTS engine treats them as literal text.
+
+### 2. Music stops at ~22s despite longer base_duration
+
+MiniMax sometimes returns a clip shorter than `base_duration_s`. Without `loopable: true` + `loop_if_short: true`, the music track goes silent.
+
+**Fix:** Always set both on any ambient/pad asset:
+```json
+"loopable": true,
+"loop_if_short": true
+```
+
+### 3. Female vocal chanting appears in opening
+
+If the music style prompt contains any humming or lyric hint (`Mm...`, `vocal`, `choir`), MiniMax may add female chanting.
+
+**Fix:** Always end the style with `[instrumental]` and set `"lyrics": "[instrumental]"`.
+
+### 4. Music disappears at exactly 30s
+
+This was a `through_next_cue` implementation bug (v1–v10) — the code fell back to `float(cue.get("duration_s", 30))` = 30s when `duration_source` was unrecognized. Fixed in current generate.py.
+
+If you see music cutting off at a round number, check your `duration_source` values.
+
+### 5. Per-cue vol creates abrupt jumps
+
+Setting different `vol` values per cue creates sharp volume steps between sections, not a smooth arc. Use `mix.volume_envelope` instead for gradual shaping.
+
+### 6. Cloned English voice sounds foreign in Chinese
+
+A voice cloned from English audio has no Chinese tonal patterns. Use MiniMax `/v1/voice_design` to create a new Chinese-native designed voice instead.
+
+---
+
+## Pronunciation Issues
+
+If a Chinese word is consistently mispronounced (wrong tone due to context):
+
+1. **First try:** rewrite the surrounding sentence to change context
+2. **Second try:** check if the word appears in a phrase where the tone naturally shifts (e.g., 少 in 少年 vs 减少 vs standalone 少)
+3. **Don't:** add inline phonetic annotations — they get read aloud as extra text
+4. **Don't:** use SSML phoneme markup unless the TTS API explicitly supports it
+
+---
 
 ## Voice Mood Presets
 
-| Mood | Speed | Pitch | Vol |
-|------|-------|-------|-----|
-| Neutral | 1.0 | 0 | 1.0 |
-| Reflective / Essay | 0.85 | -1 | 1.0 |
-| Intimate / Confessional | 0.9 | -2 | 0.8 |
-| Urgent / Direct | 1.05 | 0 | 1.1 |
-| Melancholic | 0.8 | -2 | 0.7 |
+| Mood | Speed | Pitch | Notes |
+|------|-------|-------|-------|
+| Neutral | 1.0 | 0 | Default |
+| Reflective / Essay | 0.85–0.88 | -1 | Calm, considered |
+| Intimate / Confessional | 0.88–0.90 | -2 | Slower, warmer |
+| Urgent / Direct | 1.05 | 0 | Faster, cleaner |
+| Melancholic | 0.82–0.85 | -2 | Slowest, lowest |
+
+For per-segment variation, use `speed_overrides` to match topic/mood within an episode.
+
+---
 
 ## Common Mistakes
 
-- **Stage directions in script** — `[MUSIC IN]` doesn't get spoken naturally. Remove all markers.
-- **Script too long for duration** — validate before generating. 4 min Chinese = ~800 chars
+- **Script too long for duration** — validate before generating. 4 min Chinese ≈ 800 chars
 - **Single thesis, multiple topics** — one podcast = one idea. Split if needed.
-- **BGM too loud** — `volume: 0.25` is the ceiling. Above that it competes with voice.
-- **Flat sentence length** — if every sentence is the same length, TTS sounds robotic.
 - **No arc** — a list of observations is not a podcast. There must be tension and release.
+- **Per-cue vol for arc shaping** — use `mix.volume_envelope` instead
+- **Flat sentence length** — if every sentence is the same length, TTS sounds robotic
+- **Stage directions in script** — markers like `[MUSIC IN]` work; don't invent new ones not in `music_cues`
+- **Saving plan to /tmp** — always save to `events/podcast/plans/` or plans are lost on restart

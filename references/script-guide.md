@@ -82,14 +82,30 @@ Podcast scripts are *heard*, not read.
 
 ## Music Integration
 
-Music is background, not accompaniment. Rules:
+Music is structured through **script markers** + **plan music_cues**. Rules:
 
-- BGM volume: 0.12–0.20 is the sweet spot. Below 0.12 = inaudible. Above 0.25 = competing.
-- Fade out: last 5 seconds of episode, BGM fades out with the voice
-- Music style should match emotional register: reflective essay → sparse piano, ambient; energetic → uptempo but not intrusive
-- The script doesn't need to acknowledge the music — it just breathes around it
+**Volume architecture (critical):**
+- Per-cue `vol` = natural instrument level (piano: 0.10, cello: 0.07)
+- Use `mix.volume_envelope` in the plan to shape the overall arc post-assembly
+- Never try to create a quiet middle section by setting `body vol: 0.04` — that's a constant, not a curve
+- The envelope does: [full intro] → [smooth fade] → [quiet body] → [smooth rise] → [full close]
 
-**Do NOT include music cues in the script text.** No `[MUSIC IN]`, `[FADE]`, etc. The script is pure spoken word. Music is a production layer handled by generate.py.
+**Music style:**
+- Always include `[instrumental]` at the end of every style prompt
+- Set `"lyrics": "[instrumental]"` in the library asset
+- Any humming/vocal hint in the style → MiniMax may add female chanting that drowns the host voice
+- Sparse/tintinnabuli styles create long silent zones → sounds like music "disappears"
+- Use sustained/arpeggiated/pad styles for continuous presence
+
+**Script markers:**
+- Use `[MUSIC IN]`, `[CELLO IN]`, `[MUSIC OUT]` etc. to trigger cue transitions
+- Use `[PAUSE 1.5s]` for semantic breath points between paragraphs
+- Markers go on their own line
+- The keywords must match `keyword` fields in the plan's `music_cues`
+
+**Do NOT add phonetic annotations in scripts:**
+- `（shǎo）`, `[音：shǎo]`, or any inline annotation gets read as literal text by TTS
+- Rewrite surrounding context instead if a word is mispronounced
 
 ---
 
