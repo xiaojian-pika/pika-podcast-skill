@@ -25,7 +25,7 @@ from pathlib import Path
 WORKSPACE = Path(os.environ.get("PIKABOT_WORKSPACE", "/data/.pikabot/workspace"))
 SKILLS_DIR = Path(os.environ.get("PIKABOT_SKILLS_DIR", "/app/skills"))
 
-MARKER_RE = re.compile(r'\[([A-Z][A-Z\s]+?)(?:\s*[—\-][^\]]+)?\]')
+MARKER_RE = re.compile(r'\[([A-Z][A-Z\s]*?)(?:\s+([0-9.]+s?))?(?:\s*[—\-][^\]]+)?\]')
 
 
 def log(msg):
@@ -42,18 +42,25 @@ def split_script_by_markers(script_text: str, music_cues: list) -> list:
     Text segments get ids: seg_pre (first), seg_1, seg_2, ... seg_conclusion (last).
     Marker segments get ids matching their music_cue id.
     """
-    # Build marker_keyword → cue_id map
+    # Build marker_keyword → cue_id map (supports duplicate markers via index)
     cue_by_keyword = {}
+    keyword_seen = {}
     for cue in music_cues:
         if "marker" in cue:
             m = MARKER_RE.match(cue["marker"])
             if m:
-                cue_by_keyword[m.group(1).strip()] = cue["id"]
+                keyword = m.group(1).strip()
+                count = keyword_seen.get(keyword, 0)
+                if count == 0:
+                    cue_by_keyword[keyword] = cue["id"]
+                cue_by_keyword[f"{keyword}_{count}"] = cue["id"]
+                keyword_seen[keyword] = count + 1
 
     segments = []
     text_idx = 0
     pos = 0
 
+    keyword_count = {}
     for match in MARKER_RE.finditer(script_text):
         # Text before this marker
         text = script_text[pos:match.start()].strip()
@@ -66,10 +73,18 @@ def split_script_by_markers(script_text: str, music_cues: list) -> list:
             text_idx += 1
         pos = match.end()
 
-        # The marker
+        # The marker — handle duplicate markers with index suffix
         keyword = match.group(1).strip()
-        cue_id = cue_by_keyword.get(keyword, keyword.lower().replace(" ", "_"))
-        segments.append({"id": cue_id, "type": "marker", "keyword": keyword})
+        param = match.group(2) if match.lastindex and match.lastindex >= 2 else None
+        count = keyword_count.get(keyword, 0)
+        keyword_count[keyword] = count + 1
+
+        # Try indexed lookup first (pause_1, pause_2), then plain (open, body, close)
+        if count > 0:
+            cue_id = cue_by_keyword.get(f"{keyword}_{count}", cue_by_keyword.get(keyword, keyword.lower().replace(" ", "_")))
+        else:
+            cue_id = cue_by_keyword.get(keyword, keyword.lower().replace(" ", "_"))
+        segments.append({"id": cue_id, "type": "marker", "keyword": keyword, "param": param})
 
     # Remaining text after last marker
     tail = script_text[pos:].strip()
@@ -162,7 +177,7 @@ def compute_music_durations(segments: list, tts: dict, music_cues: list) -> dict
     computed = {}
     for cue in music_cues:
         cid = cue["id"]
-        if cue.get("type") == "silence":
+        if cue.get("type") in ("silence", "pause"):
             computed[cid] = float(cue["duration_s"])
             continue
 
@@ -210,7 +225,7 @@ def prepare_library(music_library: dict, music_cues: list, cue_durations: dict, 
     """
     asset_max = {}
     for cue in music_cues:
-        if cue.get("type") == "silence":
+        if cue.get("type") in ("silence", "pause"):
             continue
         aid = cue.get("music")
         if aid:
@@ -268,19 +283,68 @@ def apply_fades(src: str, out: str, fade_in: float, fade_out: float, duration: f
     )
 
 
+def build_positioned_track(events, total_dur, out_path, tmpdir, track_name):
+    """
+    Build a single audio track from positioned events using adelay+amix.
+    Falls back to silence if no events.
+    """
+    if not events:
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi",
+            "-i", f"anullsrc=r=44100:cl=mono:d={total_dur}",
+            out_path
+        ], check=True, capture_output=True)
+        return
+
+    input_args = []
+    filter_parts = []
+    labels = []
+
+    for idx, evt in enumerate(events):
+        delay_ms = int(evt["start_s"] * 1000)
+        vol = evt.get("vol", 1.0)
+        input_args += ["-i", evt["path"]]
+        lbl = f"{track_name}{idx}"
+        filter_parts.append(
+            f"[{idx}:a]adelay={delay_ms}:all=1,volume={vol}[{lbl}]"
+        )
+        labels.append(f"[{lbl}]")
+
+    n = len(labels)
+    if n == 1:
+        filter_parts.append(f"{''.join(labels)}anull[out]")
+    else:
+        filter_parts.append(
+            f"{''.join(labels)}amix=inputs={n}:duration=longest:normalize=0[out]"
+        )
+
+    cmd = ["ffmpeg", "-y"] + input_args + [
+        "-filter_complex", ";".join(filter_parts),
+        "-map", "[out]",
+        "-t", str(total_dur + 1),
+        "-ar", "44100",
+        out_path
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"FFmpeg {track_name} track failed:\n{r.stderr[-500:]}")
+
+
 def mix_all(segments, tts, lib_files, music_cues, cue_durations, mix_cfg, out_path, tmpdir):
     """
-    Build voice + music event lists, then mix with ffmpeg adelay+amix.
+    2-stage mix:
+      Stage 1: Build voice_track (all TTS segments positioned with delays)
+      Stage 2: Build music_track (all music segments positioned)
+      Stage 3: amix voice + music at relative volumes
     """
     cue_map = {c["id"]: c for c in music_cues}
 
-    voice_events = []   # [{path, start_s, duration_s, vol}]
+    voice_events = []
     music_events = []
 
     current_time = 0.0
     placed_tts = set()
 
-    # Walk segments in order
     i = 0
     while i < len(segments):
         seg = segments[i]
@@ -306,8 +370,9 @@ def mix_all(segments, tts, lib_files, music_cues, cue_durations, mix_cfg, out_pa
                 continue
 
             cue_dur = cue_durations.get(cid, 0)
+            cue_type = cue.get("type", "music")
 
-            if cue.get("type") == "silence":
+            if cue_type in ("silence", "pause"):
                 current_time += cue_dur
                 i += 1
                 continue
@@ -316,7 +381,6 @@ def mix_all(segments, tts, lib_files, music_cues, cue_durations, mix_cfg, out_pa
             music_delay = cue.get("music_delay_s", 0)
             aid = cue.get("music")
 
-            # Absolute start times
             music_abs_start = current_time + music_delay
             voice_abs_start = current_time + voice_delay
 
@@ -338,7 +402,6 @@ def mix_all(segments, tts, lib_files, music_cues, cue_durations, mix_cfg, out_pa
                 placed_tts.add(next_text["id"])
                 current_time = voice_abs_start + info["duration_s"]
 
-            # Prepare and place music
             if aid and aid in lib_files:
                 trimmed = os.path.join(tmpdir, f"cue_{cid}_trim.mp3")
                 faded   = os.path.join(tmpdir, f"cue_{cid}_faded.mp3")
@@ -362,37 +425,32 @@ def mix_all(segments, tts, lib_files, music_cues, cue_durations, mix_cfg, out_pa
     )
     log(f"  Timeline: {total:.1f}s | {len(voice_events)} voice + {len(music_events)} music events")
 
-    # Build ffmpeg command
-    all_events = [(e, "v") for e in voice_events] + [(e, "m") for e in music_events]
-    input_args = []
-    filter_parts = []
-    labels = []
+    # Stage 1: voice track
+    voice_track = os.path.join(tmpdir, "voice_track.mp3")
+    log(f"  Building voice track ({len(voice_events)} segments)...")
+    build_positioned_track(voice_events, total, voice_track, tmpdir, "v")
 
-    for idx, (evt, kind) in enumerate(all_events):
-        delay_ms = int(evt["start_s"] * 1000)
-        vol = evt["vol"]
-        input_args += ["-i", evt["path"]]
-        lbl = f"s{idx}"
-        filter_parts.append(
-            f"[{idx}:a]adelay={delay_ms}|{delay_ms},volume={vol}[{lbl}]"
-        )
-        labels.append(f"[{lbl}]")
+    # Stage 2: music track
+    music_track = os.path.join(tmpdir, "music_track.mp3")
+    log(f"  Building music track ({len(music_events)} segments)...")
+    build_positioned_track(music_events, total, music_track, tmpdir, "m")
 
-    n = len(labels)
-    filter_parts.append(
-        f"{''.join(labels)}amix=inputs={n}:duration=longest:normalize=0[out]"
-    )
-
-    cmd = ["ffmpeg", "-y"] + input_args + [
-        "-filter_complex", ";".join(filter_parts),
+    # Stage 3: final mix — voice at 1.0, music at 1.5x their own vol
+    # (music vols are 0.08-0.13; ×1.5 = 0.12-0.20, audible as background)
+    log(f"  Final mix...")
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", voice_track,
+        "-i", music_track,
+        "-filter_complex",
+        "[0:a]volume=1.0[v];[1:a]volume=1.5[m];[v][m]amix=inputs=2:duration=longest:normalize=0[out]",
         "-map", "[out]",
         "-b:a", mix_cfg.get("output_bitrate", "192k"),
         out_path
     ]
-
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
-        raise RuntimeError(f"FFmpeg mix failed:\n{r.stderr[-800:]}")
+        raise RuntimeError(f"FFmpeg final mix failed:\n{r.stderr[-800:]}")
 
     return total
 
@@ -466,7 +524,7 @@ def cmd_validate(args):
         errors.append("Missing music_library")
     lib_keys = set(plan.get("music_library", {}).keys())
     for cue in plan.get("music_cues", []):
-        if cue.get("type") == "silence":
+        if cue.get("type") in ("silence", "pause"):
             continue
         ref = cue.get("music")
         if ref and ref not in lib_keys:
