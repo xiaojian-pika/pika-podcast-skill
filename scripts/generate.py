@@ -98,15 +98,15 @@ def read_voice_id(voice_id_file: str) -> str:
 
 
 def run_tts(text: str, voice_id: str, speed: float, pitch: int, vol: float, out_path: str):
-    tts_script = SKILLS_DIR / "minimax-voice" / "scripts" / "tts.py"
+    tts_script = SKILLS_DIR / "minimax-voice" / "scripts" / "tts-minimax.py"
     cmd = [
         sys.executable, str(tts_script),
-        "--voice-id", voice_id,
-        "--text", text,
+        voice_id,
+        text,
+        out_path,
         "--speed", str(speed),
         "--pitch", str(pitch),
         "--vol", str(vol),
-        "--output", out_path
     ]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
@@ -190,12 +190,12 @@ def compute_music_durations(segments: list, tts: dict, music_cues: list) -> dict
 # ─────────────────────────────────────────────────────────────
 
 def run_music_gen(style: str, lyrics: str, out_path: str):
-    music_script = SKILLS_DIR / "minimax-music" / "scripts" / "generate.py"
+    music_script = SKILLS_DIR / "minimax-music" / "scripts" / "generate-music.py"
     cmd = [
         sys.executable, str(music_script),
-        "--prompt", style,
-        "--lyrics", lyrics,
-        "--output", out_path
+        style,
+        lyrics,
+        out_path
     ]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
