@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "topic": "少",
+    "thesis": "少不是减法——是一种对什么值得存在的判断",
+    "duration_minutes": 4,
+    "language": "zh",
+    "version": 2
+  },
+
+  "voice": {
+    "voice_id_file": "life/voice_id.txt",
+    "base_speed": 0.92,
+    "base_pitch": -1,
+    "base_vol": 1.0,
+    "speed_overrides": {
+      "seg_pre":        0.90,
+      "seg_conclusion": 0.87
+    }
+  },
+
+  "script_file": "events/podcast/plans/shao_ep01_script.txt",
+
+  "music_library": {
+    "piano_motif": {
+      "style": "single piano note struck twice, tintinnabuli style, very long reverb tail, near-silence between strikes, sparse and still",
+      "lyrics": "[intro]\nMm...\n[outro]\nMm...",
+      "base_duration_s": 55,
+      "loopable": false
+    },
+    "cello_drone": {
+      "style": "low cello drone, single sustained note, dark ambient, slow breath-like swell, no melody, no rhythm",
+      "lyrics": "[verse]\nHmm...",
+      "base_duration_s": 40,
+      "loopable": true
+    }
+  },
+
+  "music_cues": [
+    {
+      "id": "open",
+      "marker": "[MUSIC IN]",
+      "music": "piano_motif",
+      "voice_delay_s": 5,
+      "duration_source": "next_tts_segment",
+      "duration_buffer_s": 2,
+      "vol": 0.13,
+      "fade_in_s": 1,
+      "fade_out_s": 0,
+      "crossfade_next_s": 0
+    },
+    {
+      "id": "body",
+      "marker": "[MUSIC SHIFT]",
+      "music": "cello_drone",
+      "voice_delay_s": 0,
+      "music_delay_s": 2,
+      "loop_if_short": true,
+      "duration_source": "next_tts_segment",
+      "duration_buffer_s": 4,
+      "vol": 0.09,
+      "crossfade_prev_s": 4,
+      "fade_in_s": 0,
+      "fade_out_s": 0
+    },
+    {
+      "id": "pre_close",
+      "type": "silence",
+      "duration_s": 5
+    },
+    {
+      "id": "close",
+      "marker": "[MUSIC OUT]",
+      "music": "piano_motif",
+      "voice_delay_s": 0,
+      "music_delay_s": 3,
+      "duration_source": "next_tts_segment",
+      "duration_buffer_s": 14,
+      "vol": 0.08,
+      "fade_in_s": 2,
+      "fade_out_s": 12
+    }
+  ],
+
+  "mix": {
+    "crossfade_algorithm": "equal_power",
+    "music_under_voice": true,
+    "output_format": "mp3",
+    "output_bitrate": "192k",
+    "master_vol": 1.0
+  }
+}
