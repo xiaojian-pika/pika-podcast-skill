@@ -112,7 +112,7 @@ def read_voice_id(voice_id_file: str) -> str:
     return (WORKSPACE / voice_id_file).read_text().strip()
 
 
-def run_tts(text: str, voice_id: str, speed: float, pitch: int, vol: float, out_path: str):
+def run_tts(text: str, voice_id: str, speed: float, pitch: int, vol: float, out_path: str, language: str = None):
     tts_script = SKILLS_DIR / "minimax-voice" / "scripts" / "tts-minimax.py"
     cmd = [
         sys.executable, str(tts_script),
@@ -144,7 +144,7 @@ def generate_all_tts(segments: list, voice_cfg: dict, tmpdir: str) -> dict:
         speed = overrides.get(sid, base_speed)
         out = os.path.join(tmpdir, f"tts_{sid}.mp3")
         log(f"  TTS [{sid}] speed={speed} ({len(seg['text'])} chars)...")
-        run_tts(seg["text"], voice_id, speed, pitch, vol, out)
+        run_tts(seg["text"], voice_id, speed, pitch, vol, out, language=voice_cfg.get("language"))
         dur = get_audio_duration(out)
         results[sid] = {"path": out, "duration_s": dur}
         log(f"    → {dur:.1f}s")
