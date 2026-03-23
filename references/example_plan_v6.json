@@ -1,0 +1,105 @@
+{
+  "meta": {
+    "topic": "少",
+    "thesis": "少不是减法——是一种对什么值得存在的判断",
+    "duration_minutes": 4,
+    "language": "zh",
+    "version": 6
+  },
+  "voice": {
+    "voice_id_file": "life/voice_id.txt",
+    "base_speed": 0.92,
+    "base_pitch": -1,
+    "base_vol": 1.0,
+    "speed_overrides": {
+      "seg_pre": 0.88,
+      "seg_1": 0.93,
+      "seg_2": 0.86,
+      "seg_3": 0.84,
+      "seg_4": 0.9,
+      "seg_conclusion": 0.87
+    },
+    "language": "Chinese"
+  },
+  "script_file": "events/podcast/plans/shao_ep01_script.txt",
+  "music_library": {
+    "piano_motif": {
+      "style": "atmospheric piano pad, slow gentle arpeggios, sparse but continuous, soft sustained chords, dreamlike and still, minimal, tintinnabuli influenced, ambient, low reverb, never fully silent",
+      "lyrics": "[intro]\nMm...\n[outro]\nMm...",
+      "base_duration_s": 60,
+      "loopable": false
+    },
+    "cello_drone": {
+      "style": "low cello drone, single sustained note, dark ambient, slow breath-like swell, no melody, no rhythm",
+      "lyrics": "[verse]\nHmm...",
+      "base_duration_s": 40,
+      "loopable": true
+    }
+  },
+  "music_cues": [
+    {
+      "id": "open",
+      "marker": "[MUSIC IN]",
+      "music": "piano_motif",
+      "voice_delay_s": 4,
+      "duration_source": "through_next_cue",
+      "duration_buffer_s": 3,
+      "vol": 0.2,
+      "fade_in_s": 1,
+      "fade_out_s": 5,
+      "crossfade_next_s": 3
+    },
+    {
+      "id": "pause_1",
+      "marker": "[PAUSE 1.5s]",
+      "type": "pause",
+      "duration_s": 1.5
+    },
+    {
+      "id": "body",
+      "marker": "[MUSIC SHIFT]",
+      "music": "cello_drone",
+      "voice_delay_s": 0,
+      "music_delay_s": 2,
+      "loop_if_short": true,
+      "duration_source": "through_next_cue",
+      "duration_buffer_s": 4,
+      "vol": 0.13,
+      "crossfade_prev_s": 3,
+      "fade_in_s": 3,
+      "fade_out_s": 8,
+      "crossfade_next_s": 4
+    },
+    {
+      "id": "pause_2",
+      "marker": "[PAUSE 1.5s]",
+      "type": "pause",
+      "duration_s": 1.5
+    },
+    {
+      "id": "pre_close",
+      "marker": "[SILENCE]",
+      "type": "silence",
+      "duration_s": 3
+    },
+    {
+      "id": "close",
+      "marker": "[MUSIC OUT]",
+      "music": "piano_motif",
+      "voice_delay_s": 0,
+      "music_delay_s": 3,
+      "duration_source": "next_tts_segment",
+      "duration_buffer_s": 14,
+      "vol": 0.14,
+      "fade_in_s": 4,
+      "fade_out_s": 6
+    }
+  ],
+  "mix": {
+    "crossfade_algorithm": "equal_power",
+    "music_under_voice": true,
+    "output_format": "mp3",
+    "output_bitrate": "192k",
+    "master_vol": 1.0
+  }
+}
