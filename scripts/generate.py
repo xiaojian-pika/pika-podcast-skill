@@ -204,7 +204,7 @@ def compute_music_durations(segments: list, tts: dict, music_cues: list) -> dict
 # 4. Music library generation
 # ─────────────────────────────────────────────────────────────
 
-def run_music_gen(style: str, lyrics: str, out_path: str):
+def run_music_gen(style: str, lyrics: str, out_path: str, retries: int = 2):
     music_script = SKILLS_DIR / "minimax-music" / "scripts" / "generate-music.py"
     cmd = [
         sys.executable, str(music_script),
@@ -212,9 +212,13 @@ def run_music_gen(style: str, lyrics: str, out_path: str):
         lyrics,
         out_path
     ]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"Music gen failed:\n{r.stderr}")
+    for attempt in range(1, retries + 2):
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+        if r.returncode == 0:
+            return
+        log(f"    Music gen attempt {attempt} failed, {'retrying...' if attempt <= retries else 'giving up'}")
+        if attempt > retries:
+            raise RuntimeError(f"Music gen failed after {attempt} attempts:\n{r.stderr}")
 
 
 def prepare_library(music_library: dict, music_cues: list, cue_durations: dict, tmpdir: str) -> dict:
